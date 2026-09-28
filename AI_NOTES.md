@@ -33,3 +33,4 @@
   - Los tests del filtro se escribieron antes de implementarlo y fallaban (se devolvían todas las respuestas).
   - Contra el servidor local comprobé el `to` inclusivo, los parámetros vacíos, la fecha inválida (400) y el rango invertido (400).
   - En el frontend, `npm run build` y la ejecución del `api.js` real contra el servidor: omite los parámetros vacíos y muestra los errores de validación por campo.
+- **Instalación desde cero**: en un clon limpio, `pip install -r requirements.txt`, `migrate`, `seed_demo`, los 19 tests y `npm run build` funcionan sin cambios.
