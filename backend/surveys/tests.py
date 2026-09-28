@@ -248,3 +248,72 @@ class RemoveDuplicateResponsesMigrationTests(TransactionTestCase):
         )
 
         self.assertEqual(sorted(remaining), sorted(self.first_response_ids.items()))
+
+
+class SurveyResultsDateFilterTests(TestCase):
+    def setUp(self):
+        organization = Organization.objects.create(name="Northwind")
+        user = get_user_model().objects.create_user("ana", password="ana123")
+        Membership.objects.create(user=user, organization=organization)
+        self.survey = Survey.objects.create(
+            organization=organization,
+            title="Customer satisfaction",
+            external_key="northwind-csat",
+        )
+        for external_id, submitted_at in [
+            ("early", "2026-09-01T10:00:00Z"),
+            ("middle", "2026-09-10T23:59:00Z"),
+            ("late", "2026-09-20T00:00:00Z"),
+        ]:
+            Response.objects.create(
+                survey=self.survey,
+                external_id=external_id,
+                status="complete",
+                answers={},
+                submitted_at=submitted_at,
+            )
+        self.client = APIClient()
+        self.client.force_authenticate(user)
+
+    def get_results(self, **params):
+        return self.client.get(f"/api/surveys/{self.survey.id}/results/", params)
+
+    def external_ids(self, response):
+        return sorted(item["external_id"] for item in response.data["results"])
+
+    def test_from_keeps_responses_submitted_on_or_after_that_day(self):
+        response = self.get_results(**{"from": "2026-09-10"})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(self.external_ids(response), ["late", "middle"])
+        self.assertEqual(response.data["count"], 2)
+
+    def test_to_includes_the_whole_day(self):
+        response = self.get_results(to="2026-09-10")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(self.external_ids(response), ["early", "middle"])
+
+    def test_from_and_to_combined(self):
+        response = self.get_results(**{"from": "2026-09-05", "to": "2026-09-15"})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(self.external_ids(response), ["middle"])
+
+    def test_empty_filters_are_ignored(self):
+        response = self.get_results(**{"from": "", "to": ""})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["count"], 3)
+
+    def test_invalid_date_returns_400(self):
+        response = self.get_results(**{"from": "2026-13-01"})
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("from", response.data)
+
+    def test_from_after_to_returns_400(self):
+        response = self.get_results(**{"from": "2026-09-20", "to": "2026-09-10"})
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("to", response.data)

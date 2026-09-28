@@ -1,12 +1,15 @@
 from django.conf import settings
 from django.shortcuts import get_object_or_404
+from django_filters.utils import translate_validation
 from rest_framework import permissions, status
 from rest_framework.generics import GenericAPIView
 from rest_framework.response import Response as ApiResponse
 from rest_framework.views import APIView
 
+from .filters import ResponseFilter
 from .mixins import OrganizationScopedMixin
-from .models import Response, Survey
+from .models import Survey
+from .selectors import response_list
 from .serializers import ResponseSerializer, WebhookSerializer
 from .services import response_get_or_create
 
@@ -17,7 +20,12 @@ class SurveyResultsView(OrganizationScopedMixin, GenericAPIView):
 
     def get(self, request, *args, **kwargs):
         survey = self.get_object()
-        responses = Response.objects.filter(survey=survey)
+        filterset = ResponseFilter(
+            request.query_params, queryset=response_list(survey=survey)
+        )
+        if not filterset.is_valid():
+            raise translate_validation(filterset.errors)
+        responses = filterset.qs
 
         return ApiResponse(
             {

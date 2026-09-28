@@ -4,13 +4,19 @@
 
 ```bash
 cd backend
+pip install -r requirements.txt   # incluye django-filter
+python manage.py migrate
 python manage.py test
+
+cd ../frontend
+npm run build
 ```
 
 ## Organización del código
 
 - `surveys/selectors.py`: consultas de lectura, fuera de las vistas.
 - `surveys/services.py`: operaciones de escritura.
+- `surveys/filters.py`: filtros de consulta (django-filter).
 - `surveys/mixins.py`: comportamiento reutilizable de las vistas, como el aislamiento por organización.
 - Las vistas solo orquestan: validan la entrada, obtienen los datos y serializan la salida.
 
@@ -66,11 +72,43 @@ Los tests se escribieron antes del fix y fallaban con `200 != 404`. El paso post
 - `ResponseGetOrCreateTests`: con la fila ya insertada por una entrega concurrente, el servicio devuelve esa fila sin duplicar.
 - `RemoveDuplicateResponsesMigrationTests`: sobre una base con duplicados, migrar de `0001` a `0003` conserva solo la primera respuesta de cada evento. Sin la deduplicación, el test falla con `IntegrityError` al añadir la restricción.
 
+## 3. Filtro de fechas
+
+**Solución**:
+
+- **Backend**: `GET /api/surveys/<id>/results/?from=YYYY-MM-DD&to=YYYY-MM-DD`. `ResponseFilter` (django-filter) filtra `submitted_at` sobre las respuestas de la encuesta, ya acotada por organización. `count` refleja el resultado filtrado.
+- **Frontend**: dos campos de fecha con los botones *Apply* y *Clear*. Los parámetros vacíos no se envían, y los errores de validación del backend se muestran junto al nombre del campo.
+
+**Comportamiento**:
+
+| Caso | Resultado |
+| --- | --- |
+| Solo `from` | Respuestas enviadas desde ese día (inclusive). |
+| Solo `to` | Respuestas enviadas hasta ese día, **incluido el día completo**. |
+| `from` y `to` | Intersección de ambos. |
+| Parámetro vacío (`?from=`) | Se ignora. |
+| Fecha inválida o con otro formato | `400` con el error en su campo: `{"from": ["Introduzca una fecha válida."]}`. |
+| `from` posterior a `to` | `400` con el error en `to`. |
+
+**Decisiones**:
+
+- **Los días se interpretan en UTC**, la zona horaria del servidor. Para que la pantalla sea coherente con el filtro, la columna de envío se muestra en UTC (*Submitted (UTC)*).
+- **`FilterSet` explícito en lugar de `DjangoFilterBackend`**: el `queryset` de la vista es de encuestas, y `get_object()` pasa por los filter backends, así que el filtro se aplica directamente sobre las respuestas.
+- **Validación explícita**: `FilterSet.qs` descarta en silencio los valores inválidos, así que la vista comprueba `is_valid()` y responde 400 con `translate_validation`.
+- **`from` es palabra reservada en Python**: los filtros se declaran sobrescribiendo `FilterSet.get_filters()` en lugar de como atributos de clase.
+- **Versión**: se fijó `django-filter==25.1`, la última compatible con Django 5.1. La 26.1 exige una versión más nueva de Django.
+- **`min`/`max` cruzados en los campos**: el navegador no deja elegir un rango invertido, aunque el backend lo valida igualmente.
+
+**Pruebas** (`SurveyResultsDateFilterTests`): solo `from`, `to` inclusivo (una respuesta a las 23:59 del día `to` aparece), ambos combinados, parámetros vacíos, fecha inválida → 400 y rango invertido → 400. El frontend se verificó con `npm run build` y ejecutando `api.js` contra el servidor local.
+
 ## Riesgos conocidos
 
 - El mixin sigue siendo opcional: una vista nueva que herede de `APIView` sin él no queda aislada.
 - La migración `0002` borra filas de forma irreversible. Conviene hacer una copia de seguridad antes de desplegar.
 - Si el proveedor reutilizara el mismo `event_id` para actualizar una respuesta (por ejemplo, de `partial` a `complete`), la actualización se ignoraría. Habría que pasar a un upsert.
+- El filtro `__date` aplica una función sobre la columna y no aprovecha un índice sobre `submitted_at`. Con volumen, conviene filtrar por rango de datetimes o añadir un índice funcional.
+- El mensaje propio de rango inválido se muestra en inglés, mientras que los de Django salen en español por `LANGUAGE_CODE = "es-es"`. Está marcado como traducible, pero no hay catálogo de traducciones.
+- No hay tests automáticos del frontend.
 - No hay un test de concurrencia real: SQLite serializa las escrituras. Manualmente, 5 entregas en paralelo del mismo evento contra el servidor local produjeron un `201`, cuatro `200` y una sola fila.
 
 ## Mejoras con más tiempo
@@ -79,3 +117,5 @@ Los tests se escribieron antes del fix y fallaban con `200 != 404`. El paso post
 - Row-Level Security en PostgreSQL, para que la base de datos imponga el aislamiento.
 - Test de concurrencia real con PostgreSQL (`TransactionTestCase` con varios hilos lanzando el mismo evento).
 - Registrar un aviso cuando un reintento llega con un payload distinto al guardado.
+- Permitir elegir la zona horaria del filtro (por ejemplo, la del navegador) en lugar de fijarla en UTC.
+- Tests de componentes del frontend con Vitest y Vue Test Utils.
