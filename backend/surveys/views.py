@@ -1,18 +1,21 @@
 from django.conf import settings
 from django.shortcuts import get_object_or_404
 from rest_framework import permissions, status
+from rest_framework.generics import GenericAPIView
 from rest_framework.response import Response as ApiResponse
 from rest_framework.views import APIView
 
+from .mixins import OrganizationScopedMixin
 from .models import Response, Survey
 from .serializers import ResponseSerializer, WebhookSerializer
 
 
-class SurveyResultsView(APIView):
-    permission_classes = [permissions.IsAuthenticated]
+class SurveyResultsView(OrganizationScopedMixin, GenericAPIView):
+    queryset = Survey.objects.all()
+    lookup_url_kwarg = "survey_id"
 
-    def get(self, request, survey_id):
-        survey = get_object_or_404(Survey, pk=survey_id)
+    def get(self, request, *args, **kwargs):
+        survey = self.get_object()
         responses = Response.objects.filter(survey=survey)
 
         return ApiResponse(
