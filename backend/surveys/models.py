@@ -48,4 +48,9 @@ class Response(models.Model):
 
     class Meta:
         ordering = ["-submitted_at"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["survey", "external_id"], name="unique_response_event"
+            )
+        ]
 

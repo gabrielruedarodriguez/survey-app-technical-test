@@ -8,6 +8,7 @@ from rest_framework.views import APIView
 from .mixins import OrganizationScopedMixin
 from .models import Response, Survey
 from .serializers import ResponseSerializer, WebhookSerializer
+from .services import response_get_or_create
 
 
 class SurveyResultsView(OrganizationScopedMixin, GenericAPIView):
@@ -40,13 +41,16 @@ class ResponseWebhookView(APIView):
         payload = serializer.validated_data
         survey = get_object_or_404(Survey, external_key=payload["survey_key"])
 
-        response = Response.objects.create(
+        response, created = response_get_or_create(
             survey=survey,
-            external_id=payload["event_id"],
+            event_id=payload["event_id"],
             status=payload["status"],
             answers=payload["answers"],
             submitted_at=payload["submitted_at"],
         )
 
-        return ApiResponse(ResponseSerializer(response).data, status=status.HTTP_201_CREATED)
+        return ApiResponse(
+            ResponseSerializer(response).data,
+            status=status.HTTP_201_CREATED if created else status.HTTP_200_OK,
+        )
 
